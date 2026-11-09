@@ -3,7 +3,7 @@
 package_update: true # Paketlisten (apt update) vor der Installation aktualisieren
 
 packages: # Liste der Pakete, die beim ersten Boot installiert werden
-  - neofetch # Systeminfo-Anzeige (aus der Basis-Konfiguration)
+  - fastfetch # Systeminfo-Anzeige; ersetzt neofetch, das es in Ubuntu 26.04 nicht mehr gibt
   - tree # Verzeichnisbaum anzeigen (aus der Basis-Konfiguration)
   - htop # zusätzliches Paket: interaktiver Prozess- und Ressourcenmonitor
 
