@@ -1,0 +1,35 @@
+#cloud-config
+# Erste Zeile muss genau "#cloud-config" sein, sonst ignoriert cloud-init die Datei
+package_update: true # Paketlisten (apt update) vor der Installation aktualisieren
+
+packages: # Liste der Pakete, die beim ersten Boot installiert werden
+  - neofetch # Systeminfo-Anzeige (aus der Basis-Konfiguration)
+  - tree # Verzeichnisbaum anzeigen (aus der Basis-Konfiguration)
+  - htop # zusätzliches Paket: interaktiver Prozess- und Ressourcenmonitor
+
+users: # Liste der Benutzer, die beim ersten Boot erstellt werden
+  - default # Standardbenutzer "ubuntu" behalten, sonst funktioniert "multipass shell" nicht mehr
+  - name: zino # zusätzlicher Benutzer mit meinem Vornamen
+    gecos: Zino Bonin # vollständiger Name (Beschreibungsfeld in /etc/passwd)
+    groups: sudo # Mitglied der Gruppe sudo
+    sudo: ALL=(ALL) NOPASSWD:ALL # sudo für alle Befehle ohne Passwortabfrage erlauben
+    shell: /bin/bash # Bash als Login-Shell
+
+write_files: # Dateien, die beim ersten Boot geschrieben werden
+  - path: /home/ubuntu/begruessung.txt # Zielpfad der Datei (aus der Basis-Konfiguration)
+    content: | # Dateiinhalt folgt als mehrzeiliger Block (Zeilenumbrüche bleiben erhalten)
+      Diese Datei wurde von cloud-init erstellt.
+      Niemand hat sie von Hand angelegt.
+  - path: /etc/motd # eigene Datei: Begrüssung, die bei jedem Login angezeigt wird
+    permissions: "0644" # Lesbar für alle, schreibbar nur für root
+    content: | # Inhalt der Login-Nachricht
+      ==============================================
+       M346 KN01 - VM von Zino Bonin
+       Automatisch eingerichtet mit cloud-init
+      ==============================================
+
+runcmd: # Befehle, die einmalig am Ende des ersten Boots als root ausgeführt werden
+  - echo "Installation abgeschlossen am $(date)" >> /home/ubuntu/begruessung.txt # Datum an die Begrüssungsdatei anhängen
+  - mkdir -p /home/zino/projekte # eigener Befehl: Projektordner für meinen Benutzer anlegen
+  - echo "Erstellt von cloud-init am $(date)" > /home/zino/projekte/info.txt # Nachweisdatei in den neuen Ordner schreiben
+  - chown -R zino:zino /home/zino/projekte # Ordner dem Benutzer zino übergeben (runcmd läuft als root)
