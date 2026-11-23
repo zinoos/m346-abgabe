@@ -166,11 +166,33 @@ multipass launch --name kn01v2 --cloud-init cloud-init-kn01.yaml 26.04
 
 ## D) Reflexion: von Hand vs. automatisiert
 
-✏️ Noch zu erledigen: VM `manuell` von Hand einrichten und Zeit stoppen, danach `kn01v2` mit einem Befehl neu erstellen und Zeit stoppen.
+Zuerst eine VM ohne cloud-init (`multipass launch --name manuell 26.04`), danach von Hand derselbe Zustand wie bei `kn01v2`:
 
-| Variante | Aktive Arbeitszeit |
-|---|---|
-| Von Hand (`manuell`) | ✏️ |
-| Automatisiert (`kn01v2`, ein Befehl) | ✏️ |
+```bash
+sudo apt-get update
+sudo apt-get install -y fastfetch tree htop
+sudo useradd -m -s /bin/bash -c "Zino Bonin" -G sudo zino
+echo "zino ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-zino && sudo chmod 440 /etc/sudoers.d/90-zino
+printf "Diese Datei wurde von cloud-init erstellt.\nNiemand hat sie von Hand angelegt.\n" > /home/ubuntu/begruessung.txt
+echo "Installation abgeschlossen am $(date)" >> /home/ubuntu/begruessung.txt
+sudo nano /etc/motd        # Begrüssungstext von Hand eintippen
+sudo mkdir -p /home/zino/projekte
+echo "Erstellt am $(date)" | sudo tee /home/zino/projekte/info.txt
+sudo chown -R zino:zino /home/zino/projekte
+```
 
-✏️ **Reflexion (5–8 Sätze):**
+Danach beide VMs gelöscht und die automatisierte VM mit einem einzigen Befehl neu erstellt:
+
+```bash
+multipass launch --name kn01v2 --cloud-init cloud-init-kn01.yaml 26.04
+```
+
+| Variante | Aktive Arbeitszeit | Wartezeit (Installation) |
+|---|---|---|
+| Von Hand (`manuell`) | ca. 1,5 min für die reinen Befehle, mit fertig vorbereiteter Befehlsliste und einem Fehlversuch (siehe unten). Ohne Vorlage, mit Nachschlagen und Tippen, realistisch eher 10–15 min. | ca. 2 min VM-Start + 46 s Paketinstallation |
+| Automatisiert (`kn01v2`, ein Befehl) | ca. 10 s (ein Befehl tippen) | 61 s, danach `cloud-init status: done` |
+
+**Fehlversuch bei der Handarbeit:** Beim ersten Durchgang ist die Paketinstallation fehlgeschlagen (`Unable to locate package fastfetch`), weil die VM wegen der Docker-Regel aus A3 kein Internet hatte. Die übrigen Befehle liefen trotzdem weiter, und die VM sah auf den ersten Blick fertig aus. Aufgefallen ist es erst beim Überprüfen. Nach dem Reparieren der Weiterleitung musste ich `apt-get update` und `install` noch einmal ausführen.
+
+**Reflexion:**
+Von Hand passieren leicht Fehler, die man nicht sofort merkt: ein Tippfehler im Benutzernamen, eine vergessene Gruppe, falsche Dateirechte oder wie bei mir ein fehlgeschlagener Befehl, nach dem man einfach weitermacht. Bei cloud-init steht die Konfiguration einmal geprüft in einer Datei, sie läuft jedes Mal gleich ab, und ob etwas schiefging, sieht man zentral mit `cloud-init status` und im Log `/var/log/cloud-init-output.log`. Brauche ich morgen 10 solche VMs, muss ich von Hand zehnmal dieselben Schritte wiederholen. Das kostet Stunden, und jede VM wird ein bisschen anders. Mit cloud-init ist es zehnmal derselbe Befehl (oder eine Schleife), die VMs sind garantiert identisch, und die Datei ist in Git versioniert und dokumentiert sich selbst. Grenzen hat cloud-init trotzdem: Es läuft nur beim ersten Boot, Änderungen an einer bestehenden VM gehen damit also nicht, man muss sie neu erstellen. Fehler findet man erst nach dem Start im Log, und für grössere Setups mit vielen VMs, Netzwerken oder späteren Änderungen braucht es zusätzliche Werkzeuge wie OpenTofu oder Ansible.
