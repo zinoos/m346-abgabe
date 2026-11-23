@@ -3,8 +3,6 @@
 **Host-System:** Fedora Linux 44, Intel Core i7-1355U (10 Kerne / 12 logische Prozessoren), 30 GiB RAM, 8 GiB Swap (zram)
 **Multipass:** 1.17.0 · **Backend:** `qemu` (QEMU/KVM)
 
-> Abschnitte mit ✏️ muss ich noch selbst in eigenen Worten ausformulieren.
-
 ---
 
 ## A) Repository & Multipass-Test
@@ -45,10 +43,10 @@ Der Host hat **12 logische Prozessoren** (10 physische Kerne, davon 2 mit Hyper-
 
 | Gruppenmitglied | Betriebssystem | Backend | Vermutung Typ 1 / Typ 2 |
 |---|---|---|---|
-| Zino Bonin | Fedora Linux 44 | `qemu` (QEMU mit KVM) | ✏️ |
+| Zino Bonin | Fedora Linux 44 | `qemu` (QEMU mit KVM) | Typ 1 |
 | ✏️ | ✏️ | ✏️ | ✏️ |
 
-✏️ **Begründung der Vermutung** (eigene Worte):
+**Begründung der Vermutung:** Auf Linux verwendet Multipass QEMU zusammen mit **KVM**. KVM ist ein Modul direkt im Linux-Kernel. Sobald es geladen ist, wird der Kernel selbst zum Hypervisor: Die VMs laufen mit Hilfe der Virtualisierungsfunktionen der CPU (Intel VT-x) direkt auf der Hardware, und der Kernel verteilt CPU-Zeit und RAM an sie wie an normale Prozesse. QEMU emuliert nur die Geräte (Netzwerkkarte, Disk), die eigentliche Ausführung macht KVM. Darum vermute ich **Typ 1**. Es gibt aber ein Argument für Typ 2: Auf meinem Laptop läuft ja ein ganz normales Desktop-Betriebssystem, und die VMs werden als Programme darin gestartet. KVM ist deshalb eine Art Mischform, wird aber meistens als Typ 1 eingeordnet, weil der Hypervisor Teil des Kernels ist und nicht ein Programm über dem Betriebssystem.
 
 ### VM mit expliziten Ressourcen (4 CPUs, 4 GB)
 
@@ -68,7 +66,11 @@ Ergebnis: Auch das wird **akzeptiert**. `free -h` in der VM `ram-test` zeigt 37 
 
 ### Erklärung
 
-✏️ **Erklärung mit Zeitscheiben/Threads und Swap** (eigene Worte): Wieso kann man mehr zuweisen, als vorhanden ist? Hat sich die Vermutung bestätigt?
+**CPU (Zeitscheiben):** Eine virtuelle CPU ist für den Host nichts anderes als ein Thread des QEMU-Prozesses. Der Scheduler des Host-Kernels verteilt die 12 logischen Prozessoren in kurzen Zeitscheiben (Millisekunden) auf alle Threads, die gerade rechnen wollen. 16 vCPUs auf 12 logischen Prozessoren gehen also problemlos, sie müssen sich die echten Kerne einfach teilen. Weil eine VM fast nie alle vCPUs gleichzeitig voll auslastet, merkt man davon meist nichts. Erst wenn alle 16 vCPUs gleichzeitig unter Volllast stehen, bekommt jede nur noch etwa 12/16 der Rechenzeit, und die VM wird langsamer.
+
+**RAM (bedarfsgerechte Zuteilung und Swap):** Die 38 GB werden beim Start nicht wirklich reserviert. QEMU bekommt vom Host nur virtuellen Adressraum, echte RAM-Seiten werden erst zugeteilt, wenn die VM sie tatsächlich beschreibt. Darum belegt `ram-test` nach dem Start nur rund 700 MiB, obwohl sie 37 GiB «sieht». Würde die VM den Speicher wirklich füllen, würde der Host zuerst wenig benutzte Seiten in den Swap auslagern (bei mir 8 GiB zram). Das macht alles stark langsamer. Wenn auch der Swap voll ist (30 GiB RAM + 8 GiB Swap ≈ 38 GiB, also genau an der Grenze), beendet der OOM-Killer des Host-Kernels Prozesse, im schlimmsten Fall die VM selbst.
+
+**Hat sich die Vermutung bestätigt?** Teilweise. Das Ergebnis passt zu KVM: Der Linux-Kernel behandelt die VMs wie normale Prozesse und verteilt CPU und RAM mit denselben Mechanismen (Scheduler, Speicherverwaltung, Swap), und genau das ermöglicht das Overcommitment. Allein mit diesem Experiment lässt sich der Typ aber nicht eindeutig bestimmen, denn auch klassische Typ-1-Hypervisoren in Rechenzentren (z. B. VMware ESXi) erlauben Overcommitment. Das ist dort sogar gewollt, weil man so mehr VMs auf einen Server bringt. Overcommitment ist also eine Eigenschaft der Ressourcenverwaltung, nicht des Hypervisor-Typs. Es funktioniert nur gut, solange nicht alle VMs gleichzeitig ihre vollen Ressourcen brauchen.
 
 ✏️ **Vergleich in der Gruppe:** Verhalten sich die Backends gleich?
 
@@ -94,7 +96,7 @@ multipass launch --name kn01 --cloud-init cloud-init-basis.yaml 26.04
 
 ![begruessung.txt](img/c1-begruessung.png)
 
-✏️ **Welcher Teil stammt aus `write_files`, welcher aus `runcmd`?** (eigene Worte)
+**Welcher Teil stammt woher?** Die ersten zwei Zeilen («Diese Datei wurde von cloud-init erstellt.» und «Niemand hat sie von Hand angelegt.») stammen aus `write_files`: Dieser Block legt die Datei mit genau diesem festen Inhalt an. Die letzte Zeile «Installation abgeschlossen am …» stammt aus `runcmd`: Der Befehl `echo … >> /home/ubuntu/begruessung.txt` hängt sie mit `>>` an die bestehende Datei an. `$(date)` wird dabei erst beim Ausführen ersetzt, darum steht dort der Zeitpunkt der Installation. Das funktioniert nur, weil `write_files` früh im Boot läuft und `runcmd` erst ganz am Schluss.
 
 **cloud-init-Log** (`/var/log/cloud-init-output.log`):
 
