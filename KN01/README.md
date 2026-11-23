@@ -46,7 +46,7 @@ Der Host hat **12 logische Prozessoren** (10 physische Kerne, davon 2 mit Hyper-
 | Zino Bonin | Fedora Linux 44 | `qemu` (QEMU mit KVM) | Typ 1 |
 | ✏️ | ✏️ | ✏️ | ✏️ |
 
-**Begründung der Vermutung:** Auf Linux verwendet Multipass QEMU zusammen mit **KVM**. KVM ist ein Modul direkt im Linux-Kernel. Sobald es geladen ist, wird der Kernel selbst zum Hypervisor: Die VMs laufen mit Hilfe der Virtualisierungsfunktionen der CPU (Intel VT-x) direkt auf der Hardware, und der Kernel verteilt CPU-Zeit und RAM an sie wie an normale Prozesse. QEMU emuliert nur die Geräte (Netzwerkkarte, Disk), die eigentliche Ausführung macht KVM. Darum vermute ich **Typ 1**. Es gibt aber ein Argument für Typ 2: Auf meinem Laptop läuft ja ein ganz normales Desktop-Betriebssystem, und die VMs werden als Programme darin gestartet. KVM ist deshalb eine Art Mischform, wird aber meistens als Typ 1 eingeordnet, weil der Hypervisor Teil des Kernels ist und nicht ein Programm über dem Betriebssystem.
+**Begründung der Vermutung:** Ich vermute **Typ 1**. Multipass nutzt auf Linux QEMU mit KVM. KVM ist ein Teil des Linux-Kernels. Der Kernel wird damit selbst zum Hypervisor. Die VMs laufen direkt auf der CPU (mit Intel VT-x). QEMU stellt nur die virtuellen Geräte bereit, z. B. Netzwerk und Disk. Ein Argument für Typ 2 gibt es auch: Auf meinem Laptop läuft ein normales Betriebssystem, und die VMs sind Programme darin. KVM ist darum eine Mischform. Meistens zählt man es aber zu Typ 1.
 
 ### VM mit expliziten Ressourcen (4 CPUs, 4 GB)
 
@@ -66,11 +66,11 @@ Ergebnis: Auch das wird **akzeptiert**. `free -h` in der VM `ram-test` zeigt 37 
 
 ### Erklärung
 
-**CPU (Zeitscheiben):** Eine virtuelle CPU ist für den Host nichts anderes als ein Thread des QEMU-Prozesses. Der Scheduler des Host-Kernels verteilt die 12 logischen Prozessoren in kurzen Zeitscheiben (Millisekunden) auf alle Threads, die gerade rechnen wollen. 16 vCPUs auf 12 logischen Prozessoren gehen also problemlos, sie müssen sich die echten Kerne einfach teilen. Weil eine VM fast nie alle vCPUs gleichzeitig voll auslastet, merkt man davon meist nichts. Erst wenn alle 16 vCPUs gleichzeitig unter Volllast stehen, bekommt jede nur noch etwa 12/16 der Rechenzeit, und die VM wird langsamer.
+**CPU (Zeitscheiben):** Eine virtuelle CPU ist für den Host nur ein Thread. Der Host teilt seine 12 Prozessoren in kurze Zeitscheiben auf. Jeder Thread kommt der Reihe nach dran. Darum gehen auch 16 vCPUs. Sie teilen sich einfach die echten Kerne. Solange die VM nicht alle CPUs gleichzeitig voll braucht, merkt man nichts. Bei Volllast wird die VM langsamer.
 
-**RAM (bedarfsgerechte Zuteilung und Swap):** Die 38 GB werden beim Start nicht wirklich reserviert. QEMU bekommt vom Host nur virtuellen Adressraum, echte RAM-Seiten werden erst zugeteilt, wenn die VM sie tatsächlich beschreibt. Darum belegt `ram-test` nach dem Start nur rund 700 MiB, obwohl sie 37 GiB «sieht». Würde die VM den Speicher wirklich füllen, würde der Host zuerst wenig benutzte Seiten in den Swap auslagern (bei mir 8 GiB zram). Das macht alles stark langsamer. Wenn auch der Swap voll ist (30 GiB RAM + 8 GiB Swap ≈ 38 GiB, also genau an der Grenze), beendet der OOM-Killer des Host-Kernels Prozesse, im schlimmsten Fall die VM selbst.
+**RAM (Zuteilung bei Bedarf und Swap):** Die 38 GB werden beim Start nicht wirklich belegt. Der Host gibt RAM erst, wenn die VM ihn braucht. Darum belegt `ram-test` nur ca. 700 MiB. Braucht die VM mehr, als der Host hat, lagert der Host Daten in den Swap aus. Das ist viel langsamer. Ist auch der Swap voll, beendet der Host Prozesse (OOM-Killer). Im schlimmsten Fall ist das die VM.
 
-**Hat sich die Vermutung bestätigt?** Teilweise. Das Ergebnis passt zu KVM: Der Linux-Kernel behandelt die VMs wie normale Prozesse und verteilt CPU und RAM mit denselben Mechanismen (Scheduler, Speicherverwaltung, Swap), und genau das ermöglicht das Overcommitment. Allein mit diesem Experiment lässt sich der Typ aber nicht eindeutig bestimmen, denn auch klassische Typ-1-Hypervisoren in Rechenzentren (z. B. VMware ESXi) erlauben Overcommitment. Das ist dort sogar gewollt, weil man so mehr VMs auf einen Server bringt. Overcommitment ist also eine Eigenschaft der Ressourcenverwaltung, nicht des Hypervisor-Typs. Es funktioniert nur gut, solange nicht alle VMs gleichzeitig ihre vollen Ressourcen brauchen.
+**Hat sich die Vermutung bestätigt?** Teilweise. Das Ergebnis passt zu KVM: Der Kernel verwaltet die VMs wie normale Prozesse. Darum ist Overcommitment möglich. Das Experiment beweist den Typ aber nicht. Auch echte Typ-1-Hypervisoren wie VMware ESXi erlauben Overcommitment. Overcommitment funktioniert gut, solange nicht alle VMs gleichzeitig alles brauchen.
 
 ✏️ **Vergleich in der Gruppe:** Verhalten sich die Backends gleich?
 
@@ -96,13 +96,13 @@ multipass launch --name kn01 --cloud-init cloud-init-basis.yaml 26.04
 
 ![begruessung.txt](img/c1-begruessung.png)
 
-**Welcher Teil stammt woher?** Die ersten zwei Zeilen («Diese Datei wurde von cloud-init erstellt.» und «Niemand hat sie von Hand angelegt.») stammen aus `write_files`: Dieser Block legt die Datei mit genau diesem festen Inhalt an. Die letzte Zeile «Installation abgeschlossen am …» stammt aus `runcmd`: Der Befehl `echo … >> /home/ubuntu/begruessung.txt` hängt sie mit `>>` an die bestehende Datei an. `$(date)` wird dabei erst beim Ausführen ersetzt, darum steht dort der Zeitpunkt der Installation. Das funktioniert nur, weil `write_files` früh im Boot läuft und `runcmd` erst ganz am Schluss.
+**Welcher Teil stammt woher?** Die ersten zwei Zeilen kommen aus `write_files`. Dieser Block erstellt die Datei mit festem Text. Die letzte Zeile «Installation abgeschlossen am …» kommt aus `runcmd`. Der Befehl hängt sie mit `>>` hinten an. `$(date)` setzt dabei das aktuelle Datum ein.
 
 **cloud-init-Log** (`/var/log/cloud-init-output.log`):
 
 ![cloud-init-Log](img/c1-cloud-init-log.png)
 
-**Fehleranalyse mit dem Log:** `cloud-init status` meldet `error`. Das Log zeigt `Failure when attempting to install packages: ['neofetch', …]`, das Detail-Log `/var/log/cloud-init.log` den Grund: `The following packages were not found by APT … ['neofetch']`. Das Paket `neofetch` gibt es in Ubuntu 26.04 nicht mehr (das Projekt wurde eingestellt). Der Nachfolger ist `fastfetch`. Darum verwende ich in C2 `fastfetch`.
+**Fehleranalyse mit dem Log:** `cloud-init status` meldet `error`. Im Log steht `Failure when attempting to install packages: ['neofetch', …]`. Das Detail-Log `/var/log/cloud-init.log` zeigt den Grund: `The following packages were not found by APT … ['neofetch']`. `neofetch` gibt es in Ubuntu 26.04 nicht mehr. Der Nachfolger heisst `fastfetch`. Darum nehme ich in C2 `fastfetch`.
 
 Die VM `kn01` wurde danach gelöscht.
 
@@ -189,10 +189,10 @@ multipass launch --name kn01v2 --cloud-init cloud-init-kn01.yaml 26.04
 
 | Variante | Aktive Arbeitszeit | Wartezeit (Installation) |
 |---|---|---|
-| Von Hand (`manuell`) | ca. 1,5 min für die reinen Befehle, mit fertig vorbereiteter Befehlsliste und einem Fehlversuch (siehe unten). Ohne Vorlage, mit Nachschlagen und Tippen, realistisch eher 10–15 min. | ca. 2 min VM-Start + 46 s Paketinstallation |
+| Von Hand (`manuell`) | ca. 1,5 min mit fertiger Befehlsliste (plus ein Fehlversuch, siehe unten). Ohne Vorlage eher 10–15 min. | ca. 2 min VM-Start + 46 s Paketinstallation |
 | Automatisiert (`kn01v2`, ein Befehl) | ca. 10 s (ein Befehl tippen) | 61 s, danach `cloud-init status: done` |
 
-**Fehlversuch bei der Handarbeit:** Beim ersten Durchgang ist die Paketinstallation fehlgeschlagen (`Unable to locate package fastfetch`), weil die VM wegen der Docker-Regel aus A3 kein Internet hatte. Die übrigen Befehle liefen trotzdem weiter, und die VM sah auf den ersten Blick fertig aus. Aufgefallen ist es erst beim Überprüfen. Nach dem Reparieren der Weiterleitung musste ich `apt-get update` und `install` noch einmal ausführen.
+**Fehlversuch bei der Handarbeit:** Beim ersten Versuch hat die Paketinstallation nicht geklappt (`Unable to locate package fastfetch`). Die VM hatte kein Internet, wegen der Docker-Regel aus A3. Die anderen Befehle liefen trotzdem weiter. Ich habe den Fehler erst beim Prüfen bemerkt. Danach musste ich die Pakete nochmals installieren.
 
 **Reflexion:**
-Von Hand passieren leicht Fehler, die man nicht sofort merkt: ein Tippfehler im Benutzernamen, eine vergessene Gruppe, falsche Dateirechte oder wie bei mir ein fehlgeschlagener Befehl, nach dem man einfach weitermacht. Bei cloud-init steht die Konfiguration einmal geprüft in einer Datei, sie läuft jedes Mal gleich ab, und ob etwas schiefging, sieht man zentral mit `cloud-init status` und im Log `/var/log/cloud-init-output.log`. Brauche ich morgen 10 solche VMs, muss ich von Hand zehnmal dieselben Schritte wiederholen. Das kostet Stunden, und jede VM wird ein bisschen anders. Mit cloud-init ist es zehnmal derselbe Befehl (oder eine Schleife), die VMs sind garantiert identisch, und die Datei ist in Git versioniert und dokumentiert sich selbst. Grenzen hat cloud-init trotzdem: Es läuft nur beim ersten Boot, Änderungen an einer bestehenden VM gehen damit also nicht, man muss sie neu erstellen. Fehler findet man erst nach dem Start im Log, und für grössere Setups mit vielen VMs, Netzwerken oder späteren Änderungen braucht es zusätzliche Werkzeuge wie OpenTofu oder Ansible.
+Von Hand macht man schnell Fehler. Zum Beispiel einen Tippfehler oder einen vergessenen Schritt. Bei mir ist ein Befehl fehlgeschlagen, und ich habe es zuerst nicht gemerkt. Mit cloud-init läuft jedes Mal genau dasselbe ab. Für 10 VMs müsste ich von Hand alles zehnmal machen. Mit cloud-init ist es zehnmal derselbe Befehl, und alle VMs sind gleich. Eine Grenze ist: cloud-init läuft nur beim ersten Start. Für Änderungen muss ich die VM neu erstellen.
