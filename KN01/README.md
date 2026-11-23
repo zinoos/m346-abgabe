@@ -9,7 +9,7 @@
 
 ### A1) Abgabe-Repository
 
-- Repository: <https://github.com/zinoos/m346-abgabe> (privat) · ✏️ Lehrperson mit Leserechten berechtigen
+- Repository: <https://github.com/zinoos/m346-abgabe> (öffentlich)
 - Struktur: ein Ordner pro Kompetenz (`KN01/` … `KN09/`) mit je einer `README.md`, Screenshots in `KNxx/img/`, Code immer als eigene Datei.
 
 ### A2) Multipass installieren und Test-VM
