@@ -18,16 +18,16 @@ Installation auf Fedora über Snap (`snapd` + `snap install multipass`).
 
 ![Multipass-Version, Backend, Test-VM](img/a2-multipass-smoke.png)
 
-Die Test-VM `smoke` (1 CPU, 1 GB RAM, 5 GB Disk, Ubuntu 26.04) lief und wurde danach mit `multipass delete --purge smoke` wieder gelöscht.
+Die Test-VM `smoke` lief und wurde danach mit `multipass delete --purge smoke` gelöscht.
 
 ### A3) Aufgetretene Probleme und Lösungen
 
-Auf Fedora lief Multipass nicht auf Anhieb. Zwei Probleme, beide nicht in der A3-Tabelle (die ist auf Windows ausgerichtet):
+Auf Fedora gab es zwei Probleme, die nicht in der A3-Tabelle stehen:
 
 | Symptom | Ursache | Lösung |
 |---|---|---|
-| `launch` hängt bei «Starting» und bricht nach 15 min mit «Timed out waiting for instance launch» ab. VM hat keine IPv4-Adresse. | Die Fedora-Firewall (firewalld) ordnet die Multipass-Bridge `mpqemubrzone1` der Standardzone zu, die nur Ports ab 1025 erlaubt. Die DHCP-Anfrage der VM (UDP-Port 67) wird blockiert. | Bridges der Zone `trusted` zuweisen: `sudo firewall-cmd --permanent --zone=trusted --add-interface=mpqemubrzone1 …` und `sudo firewall-cmd --reload` |
-| VM startet, aber cloud-init kann keine Pakete installieren (`Network is unreachable` im Log). Gateway und DNS funktionieren, Internet nicht. | Docker ist ebenfalls installiert und setzt die Forwarding-Policy des Kernels auf `DROP`. Damit wird auch der Verkehr der Multipass-VMs ins Internet verworfen. | Ausnahme in Dockers Kette `DOCKER-USER`: `sudo iptables -I DOCKER-USER -i mpqemubrzone1 -j ACCEPT` (plus Regel für Antwortpakete) |
+| `launch` bricht mit «Timed out» ab, die VM hat keine IP-Adresse. | Die Firewall blockiert die DHCP-Anfrage der VM. | Bridges der Zone `trusted` zuweisen: `sudo firewall-cmd --permanent --zone=trusted --add-interface=mpqemubrzone1 …` und `sudo firewall-cmd --reload` |
+| cloud-init kann keine Pakete installieren (`Network is unreachable`). | Docker blockiert die Weiterleitung ins Internet, auch für die VMs. | Ausnahme in Dockers Kette `DOCKER-USER`: `sudo iptables -I DOCKER-USER -i mpqemubrzone1 -j ACCEPT` (plus Regel für Antwortpakete) |
 
 ---
 
@@ -37,7 +37,7 @@ Auf Fedora lief Multipass nicht auf Anhieb. Zwei Probleme, beide nicht in der A3
 
 ![Host-Ressourcen](img/b-host-ressourcen.png)
 
-Der Host hat **12 logische Prozessoren** (10 physische Kerne, davon 2 mit Hyper-Threading) und **30 GiB RAM** plus 8 GiB Swap.
+Der Host hat **12 logische Prozessoren** und **30 GiB RAM** (plus 8 GiB Swap).
 
 ### Backend und Vermutung
 
@@ -46,7 +46,7 @@ Der Host hat **12 logische Prozessoren** (10 physische Kerne, davon 2 mit Hyper-
 | Zino Bonin | Fedora Linux 44 | `qemu` (QEMU mit KVM) | Typ 1 |
 | ✏️ | ✏️ | ✏️ | ✏️ |
 
-**Begründung der Vermutung:** Ich vermute **Typ 1**. Multipass nutzt auf Linux QEMU mit KVM. KVM ist ein Teil des Linux-Kernels. Der Kernel wird damit selbst zum Hypervisor. Die VMs laufen direkt auf der CPU (mit Intel VT-x). QEMU stellt nur die virtuellen Geräte bereit, z. B. Netzwerk und Disk. Ein Argument für Typ 2 gibt es auch: Auf meinem Laptop läuft ein normales Betriebssystem, und die VMs sind Programme darin. KVM ist darum eine Mischform. Meistens zählt man es aber zu Typ 1.
+**Begründung:** KVM ist ein Teil des Linux-Kernels, der Kernel wird also selbst zum Hypervisor und die VMs laufen direkt auf der Hardware. Darum vermute ich Typ 1.
 
 ### VM mit expliziten Ressourcen (4 CPUs, 4 GB)
 
@@ -56,21 +56,21 @@ Der Host hat **12 logische Prozessoren** (10 physische Kerne, davon 2 mit Hyper-
 
 ![CPU-Overcommitment](img/b-cpu-overcommit.png)
 
-Ergebnis: Multipass/QEMU **akzeptiert** die Zuweisung. Die VM `cpu-test` meldet 16 CPUs (`lscpu`, `nproc`), obwohl der Host nur 12 logische Prozessoren hat.
+Ergebnis: Die Zuweisung wird **akzeptiert**, die VM hat 16 CPUs, obwohl der Host nur 12 hat.
 
 ### RAM-Overcommitment: 38 GB auf 30 GiB Host-RAM
 
 ![RAM-Overcommitment](img/b-ram-overcommit.png)
 
-Ergebnis: Auch das wird **akzeptiert**. `free -h` in der VM `ram-test` zeigt 37 GiB, also mehr als der Host physisch hat. Belegt sind in der VM nach dem Start nur rund 700 MiB.
+Ergebnis: Auch das wird **akzeptiert**, die VM zeigt 37 GiB, belegt aber nur ca. 700 MiB.
 
 ### Erklärung
 
-**CPU (Zeitscheiben):** Eine virtuelle CPU ist für den Host nur ein Thread. Der Host teilt seine 12 Prozessoren in kurze Zeitscheiben auf. Jeder Thread kommt der Reihe nach dran. Darum gehen auch 16 vCPUs. Sie teilen sich einfach die echten Kerne. Solange die VM nicht alle CPUs gleichzeitig voll braucht, merkt man nichts. Bei Volllast wird die VM langsamer.
+**CPU:** Jede vCPU ist auf dem Host nur ein Thread, der in Zeitscheiben auf den echten Kernen läuft. Darum gehen auch 16 vCPUs, bei Volllast wird es einfach langsamer.
 
-**RAM (Zuteilung bei Bedarf und Swap):** Die 38 GB werden beim Start nicht wirklich belegt. Der Host gibt RAM erst, wenn die VM ihn braucht. Darum belegt `ram-test` nur ca. 700 MiB. Braucht die VM mehr, als der Host hat, lagert der Host Daten in den Swap aus. Das ist viel langsamer. Ist auch der Swap voll, beendet der Host Prozesse (OOM-Killer). Im schlimmsten Fall ist das die VM.
+**RAM:** Der Host gibt den RAM erst, wenn die VM ihn wirklich braucht. Wird er knapp, lagert der Host in den Swap aus, und wenn auch der voll ist, beendet er Prozesse.
 
-**Hat sich die Vermutung bestätigt?** Teilweise. Das Ergebnis passt zu KVM: Der Kernel verwaltet die VMs wie normale Prozesse. Darum ist Overcommitment möglich. Das Experiment beweist den Typ aber nicht. Auch echte Typ-1-Hypervisoren wie VMware ESXi erlauben Overcommitment. Overcommitment funktioniert gut, solange nicht alle VMs gleichzeitig alles brauchen.
+**Vermutung bestätigt?** Teilweise: Das Ergebnis passt zu KVM, aber auch andere Typ-1-Hypervisoren erlauben Overcommitment. Das Experiment beweist den Typ also nicht.
 
 ✏️ **Vergleich in der Gruppe:** Verhalten sich die Backends gleich?
 
@@ -96,13 +96,13 @@ multipass launch --name kn01 --cloud-init cloud-init-basis.yaml 26.04
 
 ![begruessung.txt](img/c1-begruessung.png)
 
-**Welcher Teil stammt woher?** Die ersten zwei Zeilen kommen aus `write_files`. Dieser Block erstellt die Datei mit festem Text. Die letzte Zeile «Installation abgeschlossen am …» kommt aus `runcmd`. Der Befehl hängt sie mit `>>` hinten an. `$(date)` setzt dabei das aktuelle Datum ein.
+**Welcher Teil stammt woher?** Die ersten zwei Zeilen kommen aus `write_files`. Die Zeile mit dem Datum hängt `runcmd` am Schluss an.
 
 **cloud-init-Log** (`/var/log/cloud-init-output.log`):
 
 ![cloud-init-Log](img/c1-cloud-init-log.png)
 
-**Fehleranalyse mit dem Log:** `cloud-init status` meldet `error`. Im Log steht `Failure when attempting to install packages: ['neofetch', …]`. Das Detail-Log `/var/log/cloud-init.log` zeigt den Grund: `The following packages were not found by APT … ['neofetch']`. `neofetch` gibt es in Ubuntu 26.04 nicht mehr. Der Nachfolger heisst `fastfetch`. Darum nehme ich in C2 `fastfetch`.
+**Fehleranalyse:** Laut Log wurde `neofetch` nicht gefunden, weil es das Paket in Ubuntu 26.04 nicht mehr gibt. Darum verwende ich in C2 den Nachfolger `fastfetch`.
 
 Die VM `kn01` wurde danach gelöscht.
 
@@ -154,11 +154,11 @@ multipass launch --name kn01v2 --cloud-init cloud-init-kn01.yaml 26.04
 
 `cloud-init status` meldet diesmal `done` (keine Fehler).
 
-**Nachweis 1 – Benutzer `zino`** (Bash als Shell, Gruppe `sudo`, sudo funktioniert) **und Nachweis 2 – Pakete** (`htop` zusätzlich, `fastfetch`, `tree`):
+**Nachweis 1 – Benutzer `zino`** und **Nachweis 2 – Pakete**:
 
 ![Benutzer und Pakete](img/c2-benutzer-pakete.png)
 
-**Nachweis 3 – eigene Datei** `/etc/motd` und **Nachweis 4 – eigener `runcmd`-Befehl** (`/home/zino/projekte/info.txt`, gehört `zino`). Der Standardbenutzer `ubuntu` existiert weiterhin (`default` in der `users`-Liste):
+**Nachweis 3 – eigene Datei** `/etc/motd` und **Nachweis 4 – `runcmd`-Befehl** (`/home/zino/projekte/info.txt`):
 
 ![Datei und runcmd](img/c2-datei-runcmd.png)
 
@@ -189,10 +189,10 @@ multipass launch --name kn01v2 --cloud-init cloud-init-kn01.yaml 26.04
 
 | Variante | Aktive Arbeitszeit | Wartezeit (Installation) |
 |---|---|---|
-| Von Hand (`manuell`) | ca. 1,5 min mit fertiger Befehlsliste (plus ein Fehlversuch, siehe unten). Ohne Vorlage eher 10–15 min. | ca. 2 min VM-Start + 46 s Paketinstallation |
+| Von Hand (`manuell`) | ca. 1,5 min (mit fertiger Befehlsliste) | ca. 2 min VM-Start + 46 s Paketinstallation |
 | Automatisiert (`kn01v2`, ein Befehl) | ca. 10 s (ein Befehl tippen) | 61 s, danach `cloud-init status: done` |
 
-**Fehlversuch bei der Handarbeit:** Beim ersten Versuch hat die Paketinstallation nicht geklappt (`Unable to locate package fastfetch`). Die VM hatte kein Internet, wegen der Docker-Regel aus A3. Die anderen Befehle liefen trotzdem weiter. Ich habe den Fehler erst beim Prüfen bemerkt. Danach musste ich die Pakete nochmals installieren.
+**Fehlversuch:** Beim ersten Versuch schlug die Paketinstallation fehl, weil die VM kein Internet hatte. Ich habe es erst beim Prüfen bemerkt.
 
 **Reflexion:**
-Von Hand macht man schnell Fehler. Zum Beispiel einen Tippfehler oder einen vergessenen Schritt. Bei mir ist ein Befehl fehlgeschlagen, und ich habe es zuerst nicht gemerkt. Mit cloud-init läuft jedes Mal genau dasselbe ab. Für 10 VMs müsste ich von Hand alles zehnmal machen. Mit cloud-init ist es zehnmal derselbe Befehl, und alle VMs sind gleich. Eine Grenze ist: cloud-init läuft nur beim ersten Start. Für Änderungen muss ich die VM neu erstellen.
+Von Hand macht man schnell Fehler, und bei mir ist ein Befehl unbemerkt fehlgeschlagen. Mit cloud-init läuft jedes Mal genau dasselbe ab. Für 10 VMs müsste ich von Hand alles zehnmal machen. Mit cloud-init ist es zehnmal derselbe Befehl. Die Grenze ist, dass cloud-init nur beim ersten Start läuft.
